@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from utils.utils_edm import (
     remove_mean_with_mask,
     assert_mean_zero_with_mask,
+    normalize,
 )
 
 from data.aromatic_dataloader import create_data_loaders, AromaticDataset
@@ -34,8 +35,6 @@ from utils.helpers import get_cond_predictor_args
 
 # from utils.args_edm import Args_EDM
 # from models_edm import get_model
-
-from train_clean_predictor import normalize
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 import numpy as np

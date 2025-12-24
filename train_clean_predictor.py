@@ -193,7 +193,6 @@ def val_epoch_clean(
 
     return np.mean(loss_list)
 
-##TODO: Add the models 
 
 def get_cond_predictor_model(args, dataset: AromaticDataset):
     cond_predictor = EGNN_predictor(
