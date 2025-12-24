@@ -35,7 +35,7 @@ class PredictionArgs(argparse.ArgumentParser):
         self.add_argument("--normalize", type=bool, default=True)
         self.add_argument("--batch-size", type=int, default=256)
         self.add_argument("--sample-rate", type=float, default=1.0)
-        self.add_argument("--num-workers", type=int, default=32)
+        self.add_argument("--num-workers", type=int, default=8)
 
         # Model parameters
         self.add_argument("--dp", type=eval, default=True, help="Data parallelism")

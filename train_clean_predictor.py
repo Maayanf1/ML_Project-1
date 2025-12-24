@@ -139,8 +139,9 @@ def train_epoch_clean(
         f" in {int(time()-start_time)} secs"
     )
     sleep(0.01)
-    writer.add_scalar("Train loss", np.mean(loss_list), epoch)
-    writer.add_scalar("Train L1 (rescaled)", np.mean(rl_loss), epoch)
+    if writer is not None:
+        writer.add_scalar("Train loss", np.mean(loss_list), epoch)
+        writer.add_scalar("Train L1 (rescaled)", np.mean(rl_loss), epoch)
 
 
 def val_epoch_clean(
@@ -193,7 +194,6 @@ def val_epoch_clean(
 
     return np.mean(loss_list)
 
-##TODO: Add the models 
 
 def get_cond_predictor_model(args, dataset: AromaticDataset):
     cond_predictor = EGNN_predictor(
@@ -264,7 +264,8 @@ def main(pred_args, device):
         os.makedirs(pred_args.exp_dir, exist_ok=True)
 
     with open(os.path.join(pred_args.exp_dir, "args_clean.txt"), "w") as f:
-        json.dump(pred_args.__dict__, f, indent=2)
+        json.dump(pred_args.__dict__, f, indent=2, default=str)
+
 
     writer = None
     if getattr(pred_args, "log_tensorboard", False):
@@ -353,7 +354,12 @@ if __name__ == "__main__":
     if not os.path.isdir(pred_args.exp_dir):
         os.makedirs(pred_args.exp_dir)
 
+    #with open(os.path.join(pred_args.exp_dir, "args_clean.txt"), "w") as f:
+        #json.dump(pred_args.__dict__, f, indent=2)
     with open(os.path.join(pred_args.exp_dir, "args_clean.txt"), "w") as f:
-        json.dump(pred_args.__dict__, f, indent=2)
+        args_dict = dict(pred_args.__dict__)
+        if "device" in args_dict:
+            args_dict["device"] = str(args_dict["device"])
+        json.dump(args_dict, f, indent=2)
 
     main(pred_args, device)

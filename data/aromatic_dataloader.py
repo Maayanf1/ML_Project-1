@@ -129,8 +129,11 @@ class AromaticDataset(Dataset):
 
     def get_rings(self, df_row):
         name = df_row["molecule"]
-        os.makedirs(self.xyz_root + "_rings_preprocessed", exist_ok=True)
-        preprocessed_path = self.xyz_root + "_rings_preprocessed/" + name + ".xyz"
+        preprocessed_dir = self.xyz_root + "_rings_preprocessed"
+        os.makedirs(preprocessed_dir, exist_ok=True)
+
+        preprocessed_path = os.path.join(preprocessed_dir, name + ".pt")
+
         if Path(preprocessed_path).is_file():
             x, adj, node_features, orientation = torch.load(preprocessed_path)
         else:
@@ -147,29 +150,46 @@ class AromaticDataset(Dataset):
                 one_hot(knot_type, num_classes=len(self.knots_list)).squeeze(1).float()
             )
             orientation = [k.orientation for k in knots]
-            torch.save([x, adj, node_features, orientation], preprocessed_path)
+            
+            tmp_path = preprocessed_path + ".tmp"
+            torch.save([x, adj, node_features, orientation], tmp_path)
+            os.replace(tmp_path, preprocessed_path)
+
         return x, adj, node_features, orientation
+
 
     def get_atoms(self, df_row):
         name = df_row["molecule"]
-        preprocessed_path = self.xyz_root + "_atoms_preprocessed/" + name + ".xyz"
+
+        preprocessed_dir = self.xyz_root + "_atoms_preprocessed"
+        os.makedirs(preprocessed_dir, exist_ok=True)
+
+        preprocessed_path = os.path.join(preprocessed_dir, name + ".pt")
+
         if Path(preprocessed_path).is_file():
             x, adj, node_features = torch.load(preprocessed_path)
         else:
             mol, edges, atom_connectivity, _ = self.get_mol(df_row)
-            # get_figure(mol, edges, showPlot=True)
             x = torch.tensor([a.get_coord() for a in mol.atoms], dtype=DTYPE)
+
             atom_element = torch.tensor(
                 [self.atoms_list.index(atom.element) for atom in mol.atoms]
             ).unsqueeze(1)
+
             node_features = (
                 one_hot(atom_element, num_classes=len(self.atoms_list))
                 .squeeze(1)
                 .float()
             )
+
             adj = atom_connectivity
-            torch.save([x, adj, node_features], preprocessed_path)
+
+            tmp_path = preprocessed_path + ".tmp"
+            torch.save([x, adj, node_features], tmp_path)
+            os.replace(tmp_path, preprocessed_path)
+
         return x, adj, node_features
+
 
     def get_all(self, df_row):
         # extract targets
@@ -254,16 +274,16 @@ def get_paths(args):
         csv_path = args.csv_file
         xyz_path = args.xyz_root
     elif args.dataset == "cata":
-        csv_path = "/home/tomerweiss/PBHs-design/data/COMPAS-1x.csv"
-        xyz_path = "/home/tomerweiss/PBHs-design/data/peri-cata-89893-xyz"
+        csv_path = "/home/maayanfarkash/proj/PBHs-design/Compas1/compas-1x.csv"
+        xyz_path = "/home/maayanfarkash/proj/PBHs-design/Compas1/pahs-cata-34072-xyz"
     elif args.dataset == "peri":
-        csv_path = "/home/tomerweiss/PBHs-design/data/peri-xtb-data-55821.csv"
-        xyz_path = "/home/tomerweiss/PBHs-design/data/peri-cata-89893-xyz"
+        csv_path = "/home/maayanfarkash/proj/PBHs-design/Compas3/compas-3x.csv"
+        xyz_path = "/home/maayanfarkash/proj/PBHs-design/Compas3/compas3x-xyzs"
     elif args.dataset == "hetro":
-        csv_path = "/home/tomerweiss/PBHs-design/data/db-474K-OPV-filtered.csv"
-        xyz_path = "/home/tomerweiss/PBHs-design/data/db-474K-xyz"
+        csv_path = "/home/maayanfarkash/proj/PBHs-design/Pas_csv/db-474K-OPV-filtered.csv"
+        xyz_path = "/home/maayanfarkash/proj/PBHs-design/Pas_xyz/db-474K-xyz"
     elif args.dataset == "hetro-dft":
-        csv_path = "/home/tomerweiss/PBHs-design/data/db-15067-dft.csv"
+        csv_path = "/home/maayanfarkash/proj/PBHs-design/Compas2D/compas-2D.csv"
         xyz_path = ""
     else:
         raise NotImplementedError
