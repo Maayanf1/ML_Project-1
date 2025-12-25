@@ -156,23 +156,32 @@ class MyDataParallel(nn.DataParallel):
         else:
             return getattr(self.module, name)
         
+##Added for the normalization 
+def subspace_dimensionality(node_mask):
+    """Compute the dimensionality on translation-invariant linear subspace where distributions on x are defined."""
+    number_of_nodes = torch.sum(node_mask.squeeze(2), dim=1)
+    return (number_of_nodes - 1) * 3
 
-def normalize(self, x, h, node_mask):
-    x = x / self.norm_values[0]
-    delta_log_px = -self.subspace_dimensionality(node_mask) * np.log(
-        self.norm_values[0]
+
+def normalize( x, h, node_mask):
+    
+    norm_values=(1.0, 1.0, 1.0)
+    norm_biases=(None, 0.0, 0.0)
+
+    x = x / norm_values[0]
+    delta_log_px = -subspace_dimensionality(node_mask) * np.log(
+        norm_values[0]
     )
 
     # Casting to float in case h still has long or int type.
     h_cat = (
-        (h["categorical"].float() - self.norm_biases[1])
-        / self.norm_values[1]
+        (h["categorical"].float() - norm_biases[1])
+        / norm_values[1]
         * node_mask
     )
-    h_int = (h["integer"].float() - self.norm_biases[2]) / self.norm_values[2]
-
-    if self.include_charges:
-        h_int = h_int * node_mask
+    h_int = (h["integer"].float() - norm_biases[2]) / norm_values[2]
+    
+    h_int = h_int * node_mask
 
     # Create new h dictionary.
     h = {"categorical": h_cat, "integer": h_int}

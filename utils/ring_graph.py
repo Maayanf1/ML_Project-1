@@ -16,24 +16,6 @@ def get_ring_type(str):
     raise NotImplementedError
 
 
-def get_ringgraph(_atoms: Sequence[Atom], _molgraph: nx.graph) -> nx.graph:
-    """
-    Generate a graph of rings (Knot Objects).
-
-    in:
-    _atoms: A list of Atoms with their xyz coordinates in Angstroms.
-    _molgraph: Molecular graph.
-
-    out:
-    graph: generated graph of the knots.
-
-    """
-    knots = get_rings(_atoms, _molgraph)
-    edges = get_rings_connectivity(knots)
-    graph = nx.Graph(edges)  # generate mathematical graph as networkx Graph object
-
-    return graph
-
 
 def get_rings(_atoms: Sequence[Atom], _molgraph: nx.graph) -> Sequence[Ring]:
     """
@@ -126,3 +108,22 @@ def get_rings_adj(_knots: Sequence[Ring]) -> Tensor:
             if i_atoms & j_atoms:
                 adj[i, j] = adj[j, i] = 1
     return adj
+
+
+def get_ringgraph(_atoms: Sequence[Atom], _molgraph: nx.graph) -> nx.graph:
+    """
+    Generate a graph of rings (Knot Objects).
+
+    in:
+    _atoms: A list of Atoms with their xyz coordinates in Angstroms.
+    _molgraph: Molecular graph.
+
+    out:
+    graph: generated graph of the knots.
+
+    """
+    knots = get_rings(_atoms, _molgraph)
+    edges = get_rings_connectivity(knots)
+    graph = nx.Graph(edges)  # generate mathematical graph as networkx Graph object
+
+    return graph
