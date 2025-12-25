@@ -330,6 +330,8 @@ def main(pred_args, device):
         writer,
     )
     print(f"Final test MAE (orig units): {test_mae:.4f}")
+    if writer is not None:
+        writer.close()
 
 
 if __name__ == "__main__":
