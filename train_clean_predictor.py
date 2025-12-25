@@ -49,20 +49,7 @@ def compute_clean_loss(
     edge_mask,
     target,
 ):
-    """
-    Clean Case 2 loss:
-    - NO diffusion noise
-    - NO random t
-    - Uses EDM normalization only (t = 0)
-    """
-
     # 1) Normalize coordinates and node features with EDM
-    # x_norm, h_norm, _ = edm_model.normalize(
-    #     x,
-    #     {"categorical": h, "integer": torch.zeros(0, device=x.device)},
-    #     node_mask,
-    # )
-
     x_norm, h_norm, _ = normalize(
         x,
         {"categorical": h, "integer": torch.zeros(0, device=x.device)},
@@ -75,11 +62,8 @@ def compute_clean_loss(
     bs, n_nodes, _ = x.shape
     edge_mask_flat = edge_mask.view(bs, n_nodes * n_nodes)   # [bs, n_nodes^2]
 
-    # 3) Use fixed t = 0 (no diffusion, just a constant conditioning value)
-    t = torch.zeros(bs, 1, device=x.device)
-
-    # 4) Forward pass
-    preds = model(xh, node_mask, edge_mask_flat, t)  # [bs, num_targets]
+    # 3) Forward pass
+    preds = model(xh, node_mask, edge_mask_flat)  # [bs, num_targets]
 
     # 5) L1 loss in normalized target space
     loss = l1_loss(preds, target)
@@ -205,7 +189,6 @@ def get_cond_predictor_model(args, dataset: AromaticDataset):
         recurrent=True,
         tanh=args.tanh,
         attention=args.attention,
-        condition_time=False, 
         coords_range=args.coords_range,
     )
 
@@ -223,19 +206,6 @@ def main(pred_args, device):
     # Data
     # ---------------------------
     train_loader, val_loader, test_loader = create_data_loaders(pred_args)
-
-    # ---------------------------
-    # EDM model ONLY for normalize()
-    # ---------------------------
-    # edm_args = Args_EDM().parse_args([])
-    # # Make EDM dataset match predictor dataset if possible
-    # if hasattr(pred_args, "dataset"):
-    #     edm_args.dataset = pred_args.dataset
-    # edm_args.device = device
-
-    # edm_model, _, _ = get_model(edm_args, train_loader)
-    # edm_model.to(device)
-    # edm_model.eval()
 
     # ---------------------------
     # Predictor model
@@ -270,7 +240,7 @@ def main(pred_args, device):
     if getattr(pred_args, "log_tensorboard", False):
         writer = SummaryWriter(log_dir=os.path.join(pred_args.exp_dir, "tb_clean"))
 
-    print("Clean predictor training args:")
+    print("predictor training args:")
     print(pred_args)
 
     # ---------------------------
@@ -279,7 +249,7 @@ def main(pred_args, device):
     best_val_mae = 1e9
     best_epoch = 0
 
-    print("Begin CLEAN training (no diffusion noise, t = 0)")
+    print("Begin training")
     for epoch in range(pred_args.num_epochs):
         train_epoch_clean(
             epoch,
@@ -312,7 +282,7 @@ def main(pred_args, device):
     # ---------------------------
     # Final test evaluation
     # ---------------------------
-    print("Testing best CLEAN model...")
+    print("Testing best model...")
     # reload best weights
     state = torch.load(
         os.path.join(pred_args.exp_dir, "model_clean.pt"),

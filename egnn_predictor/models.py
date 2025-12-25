@@ -5,389 +5,18 @@ import numpy as np
 from egnn_predictor.gcl import E_GCL, GCL
 from utils.utils_edm import remove_mean, remove_mean_with_mask
 
-
-class EGNN_dynamics(nn.Module):
-    def __init__(
-        self,
-        n_particles,
-        n_dimension,
-        hidden_nf=64,
-        device="cpu",
-        act_fn=torch.nn.SiLU(),
-        n_layers=4,
-        recurrent=True,
-        attention=False,
-        condition_time=True,
-        tanh=False,
-        mode="egnn_dynamics",
-        agg="sum",
-    ):
-        super().__init__()
-        self.mode = mode
-        if mode == "egnn_dynamics":
-            self.egnn = EGNN(
-                in_node_nf=1,
-                in_edge_nf=1,
-                hidden_nf=hidden_nf,
-                device=device,
-                act_fn=act_fn,
-                n_layers=n_layers,
-                recurrent=recurrent,
-                attention=attention,
-                tanh=tanh,
-                agg=agg,
-            )
-        elif mode == "gnn_dynamics":
-            self.gnn = GNN(
-                in_node_nf=1 + n_dimension,
-                in_edge_nf=0,
-                hidden_nf=hidden_nf,
-                out_node_nf=n_dimension,
-                device=device,
-                act_fn=act_fn,
-                n_layers=n_layers,
-                recurrent=recurrent,
-                attention=attention,
-            )
-
-        self.device = device
-        self._n_particles = n_particles
-        self._n_dimension = n_dimension
-        self.edges = self._create_edges()
-        self._edges_dict = {}
-        self.condition_time = condition_time
-
-    def forward(self, t, xs):
-
-        n_batch = xs.shape[0]
-        edges = self._cast_edges2batch(self.edges, n_batch, self._n_particles)
-        edges = [edges[0], edges[1]]
-        x = xs.view(n_batch * self._n_particles, self._n_dimension).clone()
-        h = torch.ones(n_batch * self._n_particles, 1).to(self.device)
-        if self.condition_time:
-            h = h * t
-
-        if self.mode == "egnn_dynamics":
-            edge_attr = torch.sum((x[edges[0]] - x[edges[1]]) ** 2, dim=1, keepdim=True)
-            _, x_final = self.egnn(h, x, edges, edge_attr=edge_attr)
-            vel = x_final - x
-
-        elif self.mode == "gnn_dynamics":
-            h = torch.cat([h, x], dim=1)
-            vel = self.gnn(h, edges)
-
-        vel = vel.view(n_batch, self._n_particles, self._n_dimension)
-        vel = remove_mean(vel)
-        return vel
-
-    def _create_edges(self):
-        rows, cols = [], []
-        for i in range(self._n_particles):
-            for j in range(i + 1, self._n_particles):
-                rows.append(i)
-                cols.append(j)
-                rows.append(j)
-                cols.append(i)
-        return [torch.LongTensor(rows), torch.LongTensor(cols)]
-
-    def _cast_edges2batch(self, edges, n_batch, n_nodes):
-        if n_batch not in self._edges_dict:
-            self._edges_dict = {}
-            rows, cols = edges
-            rows_total, cols_total = [], []
-            for i in range(n_batch):
-                rows_total.append(rows + i * n_nodes)
-                cols_total.append(cols + i * n_nodes)
-            rows_total = torch.cat(rows_total).to(self.device)
-            cols_total = torch.cat(cols_total).to(self.device)
-
-            self._edges_dict[n_batch] = [rows_total, cols_total]
-        return self._edges_dict[n_batch]
-
-
-class EGNN_dynamics_pos(nn.Module):
-    def __init__(
-        self,
-        context_node_nf,
-        hidden_nf=64,
-        device="cpu",
-        act_fn=torch.nn.SiLU(),
-        n_layers=4,
-        recurrent=True,
-        attention=False,
-        condition_time=True,
-        tanh=False,
-        mode="egnn_dynamics",
-        agg="sum",
-    ):
-        super().__init__()
-        self.mode = mode
-        if mode == "egnn_dynamics":
-            self.egnn = EGNN(
-                in_node_nf=1 + context_node_nf,
-                in_edge_nf=1,
-                hidden_nf=hidden_nf,
-                device=device,
-                act_fn=act_fn,
-                n_layers=n_layers,
-                recurrent=recurrent,
-                attention=attention,
-                tanh=tanh,
-                agg=agg,
-            )
-        elif mode == "gnn_dynamics":
-            self.gnn = GNN(
-                in_node_nf=1 + 3,
-                in_edge_nf=0,
-                hidden_nf=hidden_nf,
-                out_node_nf=3,
-                device=device,
-                act_fn=act_fn,
-                n_layers=n_layers,
-                recurrent=recurrent,
-                attention=attention,
-            )
-
-        self.context_node_nf = context_node_nf
-        self.device = device
-        self._edges_dict = {}
-        self.condition_time = condition_time
-
-    def forward(self, t, xh, node_mask, edge_mask, context=None):
-        raise NotImplementedError
-
-    def wrap_forward(self, node_mask, edge_mask, context):
-        def fwd(time, state):
-            return self._forward(time, state, node_mask, edge_mask, context)
-
-        return fwd
-
-    def _forward(self, t, xs, node_mask, edge_mask, context):
-        bs, n_nodes, dims = xs.shape
-        edges = self.get_adj_matrix(n_nodes, bs, self.device)
-        node_mask = node_mask.view(bs * n_nodes, 1)
-        edge_mask = edge_mask.view(bs * n_nodes * n_nodes, 1)
-        x = xs[:, :, :3].view(bs * n_nodes, -1).clone() * node_mask
-        h = torch.ones(bs * n_nodes, 1).to(self.device)
-        if self.condition_time:
-            h = h * t
-
-        if context is not None:
-            # We're conditioning, awesome!
-            context = context.view(bs * n_nodes, self.context_node_nf)
-            h = torch.cat([h, context], dim=1)
-
-        if self.mode == "egnn_dynamics":
-            edge_attr = torch.sum((x[edges[0]] - x[edges[1]]) ** 2, dim=1, keepdim=True)
-            _, x_final = self.egnn(
-                h,
-                x,
-                edges,
-                node_mask=node_mask,
-                edge_mask=edge_mask,
-                edge_attr=edge_attr,
-            )
-            vel = (
-                x_final - x
-            ) * node_mask  # This masking operation is redundant but just in case
-
-        elif self.mode == "gnn_dynamics":
-            xh = torch.cat([h, x], dim=1)
-            vel = self.gnn(xh, edges, node_mask=node_mask)
-            vel = vel[:, 0:3] * node_mask
-
-        vel = vel.view(bs, n_nodes, 3)
-
-        if node_mask is None:
-            vel = remove_mean(vel)
-        else:
-            vel = remove_mean_with_mask(vel, node_mask.view(bs, n_nodes, 1))
-
-        return vel
-
-    def get_adj_matrix(self, n_nodes, batch_size, device):
-        if n_nodes in self._edges_dict:
-            edges_dic_b = self._edges_dict[n_nodes]
-            if batch_size in edges_dic_b:
-                return edges_dic_b[batch_size]
-            else:
-                # get edges for a single sample
-                rows, cols = [], []
-                for batch_idx in range(batch_size):
-                    for i in range(n_nodes):
-                        for j in range(n_nodes):
-                            rows.append(i + batch_idx * n_nodes)
-                            cols.append(j + batch_idx * n_nodes)
-                edges = [
-                    torch.LongTensor(rows).to(device),
-                    torch.LongTensor(cols).to(device),
-                ]
-                edges_dic_b[batch_size] = edges
-        else:
-            self._edges_dict[n_nodes] = {}
-            return self.get_adj_matrix(n_nodes, batch_size, device)
-
-        return edges
-
-    def unwrap_forward(self):
-        return self._forward
-
-
-class EGNN_dynamics_QM9(nn.Module):
-    def __init__(
-        self,
-        in_node_nf,
-        context_node_nf,
-        n_dims,
-        hidden_nf=64,
-        device="cpu",
-        act_fn=torch.nn.SiLU(),
-        n_layers=4,
-        recurrent=True,
-        attention=False,
-        condition_time=True,
-        tanh=False,
-        mode="egnn_dynamics",
-        agg="sum",
-    ):
-        super().__init__()
-        self.mode = mode
-        if mode == "egnn_dynamics":
-            self.egnn = EGNN(
-                in_node_nf=in_node_nf + context_node_nf,
-                in_edge_nf=1,
-                hidden_nf=hidden_nf,
-                device=device,
-                act_fn=act_fn,
-                n_layers=n_layers,
-                recurrent=recurrent,
-                attention=attention,
-                tanh=tanh,
-                agg=agg,
-            )
-            self.in_node_nf = in_node_nf
-        elif mode == "gnn_dynamics":
-            self.gnn = GNN(
-                in_node_nf=in_node_nf + context_node_nf + 3,
-                in_edge_nf=0,
-                hidden_nf=hidden_nf,
-                out_node_nf=3 + in_node_nf,
-                device=device,
-                act_fn=act_fn,
-                n_layers=n_layers,
-                recurrent=recurrent,
-                attention=attention,
-            )
-
-        self.context_node_nf = context_node_nf
-        self.device = device
-        self.n_dims = n_dims
-        self._edges_dict = {}
-        self.condition_time = condition_time
-
-    def forward(self, t, xh, node_mask, edge_mask, context=None):
-        raise NotImplementedError
-
-    def wrap_forward(self, node_mask, edge_mask, context):
-        def fwd(time, state):
-            return self._forward(time, state, node_mask, edge_mask, context)
-
-        return fwd
-
-    def unwrap_forward(self):
-        return self._forward
-
-    def _forward(self, t, xh, node_mask, edge_mask, context):
-        bs, n_nodes, dims = xh.shape
-        h_dims = dims - self.n_dims
-        edges = self.get_adj_matrix(n_nodes, bs, self.device)
-        node_mask = node_mask.view(bs * n_nodes, 1)
-        edge_mask = edge_mask.view(bs * n_nodes * n_nodes, 1)
-        xh = xh.view(bs * n_nodes, -1).clone() * node_mask
-        x = xh[:, 0 : self.n_dims].clone()
-        if h_dims == 0:
-            h = torch.ones(bs * n_nodes, 0).to(self.device)
-        else:
-            h = xh[:, self.n_dims :].clone()
-
-        if self.condition_time:
-            h_time = torch.empty(bs * n_nodes, 1).to(self.device).fill_(t)
-            h = torch.cat([h, h_time], dim=1)
-
-        if context is not None:
-            # We're conditioning, awesome!
-            context = context.view(bs * n_nodes, self.context_node_nf)
-            h = torch.cat([h, context], dim=1)
-
-        if self.mode == "egnn_dynamics":
-            edge_attr = torch.sum((x[edges[0]] - x[edges[1]]) ** 2, dim=1, keepdim=True)
-            h_final, x_final = self.egnn(
-                h,
-                x,
-                edges,
-                node_mask=node_mask,
-                edge_mask=edge_mask,
-                edge_attr=edge_attr,
-            )
-            vel = (
-                x_final - x
-            ) * node_mask  # This masking operation is redundant but just in case
-        elif self.mode == "gnn_dynamics":
-            xh = torch.cat([x, h], dim=1)
-            output = self.gnn(xh, edges, node_mask=node_mask)
-            vel = output[:, 0:3] * node_mask
-            h_final = output[:, 3:]
-
-        else:
-            raise Exception("Wrong mode %s" % self.mode)
-
-        if context is not None:
-            # Slice off context size:
-            h_final = h_final[:, : -self.context_node_nf]
-
-        if self.condition_time:
-            # Slice off last dimension which represented time.
-            h_final = h_final[:, :-1]
-
-        vel = vel.view(bs, n_nodes, -1)
-
-        if node_mask is None:
-            vel = remove_mean(vel)
-        else:
-            vel = remove_mean_with_mask(vel, node_mask.view(bs, n_nodes, 1))
-
-        if h_dims == 0:
-            return vel
-        else:
-            h_final = h_final.view(bs, n_nodes, -1)
-            return torch.cat([vel, h_final], dim=2)
-
-    def get_adj_matrix(self, n_nodes, batch_size, device):
-        if n_nodes in self._edges_dict:
-            edges_dic_b = self._edges_dict[n_nodes]
-            if batch_size in edges_dic_b:
-                return edges_dic_b[batch_size]
-            else:
-                # get edges for a single sample
-                rows, cols = [], []
-                for batch_idx in range(batch_size):
-                    for i in range(n_nodes):
-                        for j in range(n_nodes):
-                            rows.append(i + batch_idx * n_nodes)
-                            cols.append(j + batch_idx * n_nodes)
-                edges = [
-                    torch.LongTensor(rows).to(device),
-                    torch.LongTensor(cols).to(device),
-                ]
-                edges_dic_b[batch_size] = edges
-        else:
-            self._edges_dict[n_nodes] = {}
-            return self.get_adj_matrix(n_nodes, batch_size, device)
-
-        return edges
-
-
 class EGNN_predictor(nn.Module):
+
+    """
+    Static EGNN-based graph-level predictor.
+
+    This model operates on a ring-level molecular graph (with optional
+    heteroatom nodes). It produces a single prediction per graph by
+    aggregating node embeddings after equivariant message passing.
+
+    There is NO time dependency and NO diffusion dynamics.
+    """
+
     def __init__(
         self,
         in_nf=1,
@@ -402,16 +31,15 @@ class EGNN_predictor(nn.Module):
         agg="sum",
         mean=None,
         std=None,
-        condition_time=False,
         d=3,
         coords_range=15,
     ):
         super().__init__()
         self.d = d
-        in_node_nf = in_nf + 1 if condition_time else in_nf
+        self.device = device
 
         self.egnn = EGNN(
-            in_node_nf=in_node_nf,
+            in_node_nf=in_nf,
             in_edge_nf=1,
             hidden_nf=hidden_nf,
             out_node_nf=out_nf,
@@ -424,61 +52,101 @@ class EGNN_predictor(nn.Module):
             agg=agg,
             coords_range=coords_range,
         )
+
         self.mean = mean.to(device) if mean is not None else None
         self.std = std.to(device) if std is not None else None
-        self.device = device
-        self._edges_dict = {}
-        self.condition_time = condition_time
 
-    def forward(self, xh, node_mask, edge_mask, t=torch.zeros(1)):
+        # Cache for fully-connected adjacency
+        self._edges_dict = {}
+
+
+    def forward(self, xh, node_mask, edge_mask):
+        """
+        Parameters
+        ----------
+        xh : Tensor [B, N, d + F]
+            Node inputs. First `d` channels are coordinates,
+            remaining channels are node features.
+        node_mask : Tensor [B, N, 1]
+            Mask indicating valid nodes.
+        edge_mask : Tensor [B, N*N, 1]
+            Mask indicating valid edges.
+
+        Returns
+        -------
+        Tensor [B, out_nf]
+            Graph-level prediction.
+        """
         bs, n_nodes, dims = xh.shape
+        
+        # Build fully-connected graph
         edges = self.get_adj_matrix(n_nodes, bs, self.device)
         edges = [e.to(xh.device) for e in edges]
+        
         node_mask = node_mask.view(bs * n_nodes, 1)
         edge_mask = edge_mask.view(bs * n_nodes * n_nodes, 1)
-        x = xh[:, :, : self.d].view(bs * n_nodes, -1).clone() * node_mask
-        h = xh[:, :, self.d :].view(bs * n_nodes, -1).clone() * node_mask
+        
+        # Split coordinates and node features
+        x = xh[:, :, :self.d].reshape(bs * n_nodes, self.d) * node_mask
+        h = xh[:, :, self.d:].reshape(bs * n_nodes, -1) * node_mask
+        
+        # x = xh[:, :, : self.d].view(bs * n_nodes, -1).clone() * node_mask
+        # h = xh[:, :, self.d :].view(bs * n_nodes, -1).clone() * node_mask
 
-        if self.condition_time:
-            if np.prod(t.size()) == 1:
-                # t is the same for all elements in batch.
-                h_time = torch.empty(h.shape[0], 1, device=h.device).fill_(t.item())
-            else:
-                # t is different over the batch dimension.
-                h_time = t.view(bs, 1).repeat(1, n_nodes)
-                h_time = h_time.view(bs * n_nodes, 1)
-            h = torch.cat([h, h_time], dim=1)
-
+        # Edge attributes: squared distance
         edge_attr = torch.sum((x[edges[0]] - x[edges[1]]) ** 2, dim=1, keepdim=True)
+        
+        # EGNN message passing
         h_final, _ = self.egnn(
             h, x, edges, node_mask=node_mask, edge_mask=edge_mask, edge_attr=edge_attr
         )
+        
+        # Graph-level aggregation
         h_final = h_final.view(bs, n_nodes, -1)
-        return h_final.mean(1)
+        return h_final.mean(dim=1)
+
+    # def get_adj_matrix(self, n_nodes, batch_size, device):
+    #     if n_nodes in self._edges_dict:
+    #         edges_dic_b = self._edges_dict[n_nodes]
+    #         if batch_size in edges_dic_b:
+    #             return edges_dic_b[batch_size]
+    #         else:
+    #             # get edges for a single sample
+    #             rows, cols = [], []
+    #             for batch_idx in range(batch_size):
+    #                 for i in range(n_nodes):
+    #                     for j in range(n_nodes):
+    #                         rows.append(i + batch_idx * n_nodes)
+    #                         cols.append(j + batch_idx * n_nodes)
+    #             edges = [
+    #                 torch.LongTensor(rows).to(device),
+    #                 torch.LongTensor(cols).to(device),
+    #             ]
+    #             edges_dic_b[batch_size] = edges
+    #     else:
+    #         self._edges_dict[n_nodes] = {}
+    #         return self.get_adj_matrix(n_nodes, batch_size, device)
+
+    #     return edges
 
     def get_adj_matrix(self, n_nodes, batch_size, device):
-        if n_nodes in self._edges_dict:
-            edges_dic_b = self._edges_dict[n_nodes]
-            if batch_size in edges_dic_b:
-                return edges_dic_b[batch_size]
-            else:
-                # get edges for a single sample
-                rows, cols = [], []
-                for batch_idx in range(batch_size):
-                    for i in range(n_nodes):
-                        for j in range(n_nodes):
-                            rows.append(i + batch_idx * n_nodes)
-                            cols.append(j + batch_idx * n_nodes)
-                edges = [
-                    torch.LongTensor(rows).to(device),
-                    torch.LongTensor(cols).to(device),
-                ]
-                edges_dic_b[batch_size] = edges
-        else:
+        if n_nodes not in self._edges_dict:
             self._edges_dict[n_nodes] = {}
-            return self.get_adj_matrix(n_nodes, batch_size, device)
 
-        return edges
+        if batch_size not in self._edges_dict[n_nodes]:
+            rows, cols = [], []
+            for b in range(batch_size):
+                for i in range(n_nodes):
+                    for j in range(n_nodes):
+                        rows.append(i + b * n_nodes)
+                        cols.append(j + b * n_nodes)
+
+            self._edges_dict[n_nodes][batch_size] = [
+                torch.LongTensor(rows).to(device),
+                torch.LongTensor(cols).to(device),
+            ]
+
+        return self._edges_dict[n_nodes][batch_size]
 
     def unwrap_forward(self):
         return self._forward
