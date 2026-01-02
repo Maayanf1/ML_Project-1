@@ -104,6 +104,7 @@ __ATOM_LIST__ = [
 
 from rdkit import Chem
 
+##Only group of atoms , no chemical connections are presented 
 
 class Mol:
     def __init__(self, _atoms):
